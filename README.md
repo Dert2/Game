@@ -13,6 +13,7 @@ venv/scripts/activate
 ```
 pip install -r requirements.txt
 ```
+- Запустите скрипт database/create_schema.py
 - Запустите сервер:
 ```
 uvicorn main:app --reload 
