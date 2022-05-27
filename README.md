@@ -18,4 +18,4 @@ pip install -r requirements.txt
 ```
 uvicorn main:app --reload 
 ```
-Результаты игр и матчей будут приходить на весокет ендпоинты вида: ws://localhost:8000/ws/1 (где 1 - это battleId игры)
+Результаты игр и матчей будут приходить на вебсокет ендпоинты вида: ws://localhost:8000/ws/1 (где 1 - это battleId игры)
