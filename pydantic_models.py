@@ -6,7 +6,7 @@ class OfferGetModel(BaseModel):
     userId: int
 
 
-class OfferResponseModel(BaseModel):
+class OfferRespModel(BaseModel):
     ntfId: int
     userId: int
     offerId: int
@@ -15,10 +15,19 @@ class OfferResponseModel(BaseModel):
         orm_mode = True
 
 
-class AcceptModel(BaseModel):
+class AcceptGetModel(BaseModel):
     offerId: int
     nftId: int
     userId: int
+
+
+class AcceptModelResp(BaseModel):
+    acceptId: int
+    nftId: int
+    userId: int
+
+    class Config:
+        orm_mode = True
 
 
 class BattleModel(BaseModel):

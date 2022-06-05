@@ -1,5 +1,6 @@
-from pydantic_models import BattleMoveModel
 import random
+
+from pydantic_models import BattleMoveModel
 
 
 # choice --> 0 - rock, 1 - paper, 2 - scissors

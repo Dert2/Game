@@ -1,13 +1,16 @@
 import asyncio
-from collections import defaultdict
+
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from tortoise.contrib.fastapi import register_tortoise
 from tortoise.queryset import Q
-from app_models.models import Offer, Battle, BattlesLogs, Accept
-from pydantic_models import (OfferGetModel, BattleRespModel,
-                             OfferResponseModel, AcceptModel,
-                             BattleStartModel, BattleMoveModel)
-from utils import check_winner_and_loser, damage_loser, user_can_get_damage
+
+from app_models.models import Accept, Battle, BattlesLogs, Offer
+from connection_manager import ConnectionManager
+from game_logic import (check_winner_and_loser, damage_loser,
+                        user_can_get_damage)
+from pydantic_models import (AcceptGetModel, BattleMoveModel, BattleRespModel,
+                             BattleStartModel, OfferGetModel,
+                             OfferRespModel, AcceptModelResp)
 
 
 app = FastAPI()
@@ -30,21 +33,23 @@ async def battles_create(offer_model: OfferGetModel):
 @app.get("/battles_list", status_code=200)
 async def battles_list():
     offers = await Offer.all()
-    offers_response = [OfferResponseModel.from_orm(offer) for offer in offers]
+    offers_response = [OfferRespModel.from_orm(offer) for offer in offers]
     return {"offers": offers_response}
 
 
 @app.post("/battles/accept", status_code=201)
-async def battles_accept(accept_model: AcceptModel):
+async def battles_accept(accept_model: AcceptGetModel):
     accept = await Accept.create(
         userId=accept_model.userId,
         nftId=accept_model.nftId,
-        offer_id=accept_model.offerId
+        offerId=accept_model.offerId
     )
+
     offer = await Offer.get(offerId=accept_model.offerId).prefetch_related('accepts')
     accept.offer = offer
+
     await accept.save()
-    return {"accept": accept}
+    return {"accept": AcceptModelResp.from_orm(accept)}
 
 
 @app.post("/battles_start", status_code=201)
@@ -78,6 +83,13 @@ async def battles_start(battle: BattleStartModel):
 
 @app.post("/battles_move", status_code=201)
 async def battles_move(battle_move: BattleMoveModel):
+    last_battlelogs = await BattlesLogs.filter(battleId=battle_move.battleId)
+    if len(last_battlelogs) != 0 and last_battlelogs[-1].userId == battle_move.userId:
+        raise HTTPException(
+            status_code=409,
+            detail="Wait for another player's move"
+        )
+
     user_in_battle = await Battle.filter(
         Q(
             Q(offerUserId=battle_move.userId),
@@ -90,6 +102,7 @@ async def battles_move(battle_move: BattleMoveModel):
                  status_code=409,
                  detail="You should being in battle to make move"
         )
+
     move_exists = await BattlesLogs.filter(
         Q(
             Q(userId=battle_move.userId),
@@ -98,12 +111,13 @@ async def battles_move(battle_move: BattleMoveModel):
             Q(round=battle_move.round),
             join_type="AND"
         )
-    )
+    ).exists()
     if move_exists:
         raise HTTPException(
                  status_code=409,
                  detail="You already make this move"
         )
+
     await BattlesLogs.create(
         userId=battle_move.userId,
         battleId=battle_move.battleId,
@@ -113,56 +127,22 @@ async def battles_move(battle_move: BattleMoveModel):
     return {}
 
 
-class ConnectionManager:
-
-    def __init__(self):
-        self.connections: dict = defaultdict(dict)
-
-    def get_members_room(self, room_name):
-        try:
-            return self.connections[room_name]
-        except Exception as e:
-            print(e)
-            return None
-
-    async def connect(self, websocket: WebSocket, room_name: str):
-        await websocket.accept()
-        if self.connections[room_name] == {} or len(self.connections[room_name]) == 0:
-            self.connections[room_name] = []
-        self.connections[room_name].append(websocket)
-        print(f"CONNECTIONS : {self.connections[room_name]}")
-
-    def remove(self, websocket: WebSocket, room_name: str):
-        self.connections[room_name].remove(websocket)
-        print(
-            f"CONNECTION REMOVED\nREMAINING CONNECTIONS : {self.connections[room_name]}"
-        )
-
-    async def send_to_room(self, message: dict, room_name: str):
-        living_connections = []
-        while len(self.connections[room_name]) > 0:
-            websocket = self.connections[room_name].pop()
-            await websocket.send_json(message)
-            living_connections.append(websocket)
-        self.connections[room_name] = living_connections
-
-
 manager = ConnectionManager()
 
 
 @app.websocket("/ws/{room_name}")
 # room_name --> battleId
-async def websocket_endpoint(websocket: WebSocket, room_name: str):
+async def websocket_endpoint(websocket: WebSocket, room_name: int):
     await manager.connect(websocket, room_name)
 
-    battle_id = int(room_name)
+    battle_id = room_name
     battle_exists = await Battle.filter(battleId=battle_id).exists()
     if not battle_exists:
         manager.remove(websocket, room_name)
         raise WebSocketDisconnect(1000)
 
     # list for count of logs
-    used = []
+    used_battlelogs_count = []
 
     try:
         while True:
@@ -191,9 +171,9 @@ async def websocket_endpoint(websocket: WebSocket, room_name: str):
                     BattleMoveModel.from_orm(player_move2)
                 )
 
-                if battle_moves_count in used:
+                if battle_moves_count in used_battlelogs_count:
                     continue
-                used.append(battle_moves_count)
+                used_battlelogs_count.append(battle_moves_count)
 
                 if winner_id is not None:
                     await damage_loser(battle, loser_id)
@@ -219,7 +199,7 @@ async def websocket_endpoint(websocket: WebSocket, room_name: str):
                         }
                     }
                     await battle.delete()
-                    used.clear()
+                    used_battlelogs_count.clear()
 
                 await manager.send_to_room(data, room_name)
     except WebSocketDisconnect:

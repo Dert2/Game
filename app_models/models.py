@@ -1,5 +1,5 @@
-from tortoise.models import Model
 from tortoise import fields
+from tortoise.models import Model
 
 
 class Offer(Model):
@@ -15,7 +15,13 @@ class Accept(Model):
     acceptId = fields.IntField(pk=True)
     userId = fields.IntField()
     nftId = fields.IntField()
-    offer = fields.ForeignKeyField("models.Offer", related_name="accepts", on_delete=fields.CASCADE)
+    offer = fields.ForeignKeyField(
+        "models.Offer",
+        related_name="accepts",
+        on_delete=fields.CASCADE,
+        source_field="offerId",
+        null=True
+    )
 
     def __str__(self):
         return f"{self.acceptId}"
